@@ -26,6 +26,26 @@ def _send_otp_email(email, otp):
         fail_silently=False,
     )
 
+
+def _resend_otp_services(user, purpose):
+
+    if not user:
+        raise ValueError("User missing")
+    
+
+    OTPVerification.objects.filter(user=user, purpose=purpose).delete()
+    new_otp = OTPVerification.objects.create_otp(user, purpose=purpose)
+
+    try:
+        _send_otp_email(user.email, new_otp.otp)
+    except Exception as e:
+        logger.error("Failed to send OTP | user_id=%s error=%s", user.pk, str(e))
+        raise
+
+    logger.info("Otp resent | email=%s user_id=%s", user.email, user.pk)
+    return user
+
+
 def _send_password_reset_email(email):
     send_mail(
         subject="This is about your reset password",
@@ -51,6 +71,19 @@ def _send_user_coredata_email(email):
         fail_silently=False,
     )
 
+def send_password_change_email(user):
+    send_mail(
+        subject="Your password has been changed",
+        message=(
+            f"Hi {user.username},\n\n"
+            "Your account password has just been changed.\n"
+            "If you did not perform this action, please contact support immediately!"
+        ),
+        from_email=settings.DEFAULT_FROM_EMAIL,
+        recipient_list=[user.email],
+        fail_silently=False,
+    )
+
 def sign_up_services(validated_data):
     with transaction.atomic():
         user = UserProfile.objects.create_user(
@@ -61,11 +94,39 @@ def sign_up_services(validated_data):
             last_name  = validated_data.get("last_name") or None,
             is_active  = False,
         )
-        otp_record = OTPVerification.objects.create_otp(user)
+        otp_record = OTPVerification.objects.create_otp(user, purpose='signup')
 
     _send_otp_email(user.email, otp_record.otp)
     logger.info("Signup OTP dispatched | email=%s user_id=%s", user.email, user.pk)
-    return user
+    return {"message": "User is succesfully created"}
+
+
+def signup_resend_otp_services(validated_data):
+    user = validated_data["user"]
+    purpose = "signup"
+
+    return _resend_otp_services(user=user, purpose=purpose)
+
+
+def reactivate_resend_otp_services(validated_data):
+    user = validated_data["user"]
+    purpose = "reactivate"
+
+    return _resend_otp_services(user=user, purpose=purpose)
+
+
+def deactivate_resend_otp_services(validated_data):
+    user = validated_data["user"]
+    purpose = "deactivate"
+
+    return _resend_otp_services(user=user, purpose=purpose)
+
+
+def password_reset_otp_services(validated_data):
+    user = validated_data["user"]
+    purpose = "password"
+
+    return _resend_otp_services(user=user, purpose=purpose)
 
 
 def validate_otp_activate_services(validated_data):
@@ -95,27 +156,7 @@ def validate_otp_activate_services(validated_data):
         otp_record.delete()
 
     logger.info("Account activated | email=%s user_id=%s", user.email, user.pk)
-    return user
-
-
-def resend_otp_services(validated_data):
-    user = validated_data["user"]
-
-    if not user:
-        raise ValueError("User missing")
-    
-
-    OTPVerification.objects.filter(user=user).delete()
-    new_otp = OTPVerification.objects.create_otp(user)
-
-    try:
-        _send_otp_email(user.email, new_otp.otp)
-    except Exception as e:
-        logger.error("Failed to send OTP | user_id=%s error=%s", user.pk, str(e))
-        raise
-
-    logger.info("Otp resent | email=%s user_id=%s", user.email, user.pk)
-    return user
+    return {"message": "User is successfully activated"}
 
 
 def login_services(validated_data):
@@ -200,9 +241,10 @@ def refresh_accesstoken_services(validated_data):
 
 def request_deactivation_service(validated_data):
     user = validated_data["user"]
+    purpose="deactivate"
 
     try:
-        otp_record = OTPVerification.objects.create_otp(user)
+        otp_record = OTPVerification.objects.create_otp(user, purpose=purpose)
         _send_otp_email(user.email, otp_record.otp)
 
         return {"message": "OTP sent to your email"}
@@ -231,9 +273,10 @@ def deactivate_services(validated_data):
 
 def request_reactivation_services(validated_data):
     user = validated_data["user"]
+    purpose = "reactivate"
 
     try:
-        otp_record = OTPVerification.objects.create_otp(user)
+        otp_record = OTPVerification.objects.create_otp(user, purpose=purpose)
         _send_otp_email(user.email, otp_record.otp)
 
         return {"message": "OTP sent to your email"}
@@ -252,7 +295,27 @@ def reactivate_account_services(validated_data):
 
     user.save()
 
-    logger.info("Account activated | email=%s user_id=%s", user.email, user.pk)
+    logger.info(
+        "Account activated | email=%s user_id=%s",
+        user.email,
+        user.pk
+    )
     
     return {"message": "User is reactivated"}
 
+
+
+def email_change_service(validated_data):
+    user = validated_data["user"]
+    new_email = validated_data["new_email"]
+
+    otp_record = OTPVerification.objects.create_otp(
+        user=user,
+        purpose="email"
+    )
+
+    _send_otp_email(user.email, otp=otp_record.otp)
+
+    return {
+        "message": f"OTP sent to {new_email}",
+    }

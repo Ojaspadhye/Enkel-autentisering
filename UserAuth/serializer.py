@@ -31,11 +31,19 @@ class SignupSerializer(serializers.Serializer):
 
 class OTPVerifySerializer(serializers.Serializer):
     email = serializers.EmailField()
+    purpose = serializers.ChoiceField(choices=[
+        "signup",
+        "deactivate",
+        'reactivate',
+        'password', # Reset
+        'email'
+    ])
     otp = serializers.CharField(min_length=6, max_length=6)
 
     def validate(self, data):
         email = data.get("email").strip().lower()
         otp_input = data.get("otp").strip()
+        purpose = data.get("purpose")
 
         try:
             user = UserProfile.objects.get(email__iexact=email)
@@ -47,7 +55,8 @@ class OTPVerifySerializer(serializers.Serializer):
 
         otp_record = OTPVerification.objects.filter(
             user=user,
-            otp__iexact=otp_input
+            otp__iexact=otp_input,
+            purpose=purpose
         ).first()
 
         if not otp_record:
@@ -60,14 +69,34 @@ class OTPVerifySerializer(serializers.Serializer):
 
 class OTPResendSerializer(serializers.Serializer):
     email = serializers.EmailField()
+    purpose = serializers.ChoiceField(choices=[
+        "signup",
+        "deactivate",
+        'reactivate',
+        'password', # Reset
+        'email'
+    ])
 
     def validate(self, data):
         email = data.get("email").strip().lower()
+        purpose = data.get("purpose")
 
         try:
             user = UserProfile.objects.get(email__iexact=email)
         except UserProfile.DoesNotExist:
             raise serializers.ValidationError("Invalid credential")
+        
+        if purpose in ["signup", "reactivate"]:
+            if user.is_active :
+                raise serializers.ValidationError("User is alredy active")
+            
+        elif purpose == "deactivate":
+            if user.is_active == False:
+                raise serializers.ValidationError("User is alredy deactivated")
+            
+        elif purpose == "email":
+            if not user.is_active:
+                raise serializers.ValidationError("Inactive users cannot reset password")
 
         data["user"] = user
         return data
@@ -135,7 +164,7 @@ class PasswordResetConformationSerializer(serializers.Serializer):
         otp = OTPVerification.objects.filter(
             email__iexact=email,
             otp=otp,
-            is_used=False
+            puorpose="password"
         ).first()
 
         if not otp:
@@ -249,6 +278,23 @@ class DeactivateSerializer(serializers.Serializer):
             raise serializers.ValidationError("Incorrect password.")
 
         data["user"] = user
+        return data
+
+class DeactivateOtpVerificationSerializer(serializers.Serializer):
+    otp = serializers.CharField(min_length=6, max_length=6)
+
+    def validate(self, data):
+        request = self.context.get("request")
+        user = request.user
+
+
+        otp = data.get("password")
+
+        try:
+            otp_record = OTPVerification.objects.get(user=user)
+        except serializers.ValidationError:
+            raise serializers.ValidationError("User never demanded a otp")
+        
         return data
     
 

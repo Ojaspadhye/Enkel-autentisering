@@ -7,7 +7,7 @@ from uuid import uuid1
 
 # Create your models here.
 
-OTP_EXPIRY_MINUTES = 2
+OTP_EXPIRY_MINUTES = 60 # Temporary for testing
 
 class CustomProfileManager(BaseUserManager):
     def create_user(self, username, email, password=None, **extra_fields):
@@ -72,13 +72,13 @@ class UserProfile(AbstractBaseUser):
 
 
 class OTPVerificationManager(models.Manager):
-    def create_otp(self, user):
+    def create_otp(self, user, purpose):
         self.filter(user=user).delete()
-        return self.create(user=user, otp=self._generate_otp())
+        return self.create(user=user, otp=self._generate_otp(), purpose=purpose)
 
-    def get_valid(self, email):
+    def get_valid(self, email, purpose):
         record = (
-            self.filter(user__email=email)
+            self.filter(user__email=email, purpose=purpose)
             .select_related("user")
             .order_by("-created_at")
             .first()
@@ -99,6 +99,14 @@ class OTPVerificationManager(models.Manager):
 
 
 class OTPVerification(models.Model):
+    PURPOSECHOICES = (
+        ('signup', 'signup'),
+        ('deactivate', 'deactivate'),
+        ('reactivate', 'reactivate'),
+        ('password', 'password'), # Password is for both password changes logged in and loggedout ones as there there will not be a mixup between them
+        ('email', 'email')
+    )
+
     user = models.ForeignKey(
         UserProfile,
         on_delete=models.CASCADE,
@@ -106,6 +114,7 @@ class OTPVerification(models.Model):
     )
     otp = models.CharField(max_length=6)
     created_at = models.DateTimeField(auto_now_add=True)
+    purpose = models.CharField(choices=PURPOSECHOICES, null=False, blank=False)
 
     objects = OTPVerificationManager()
 

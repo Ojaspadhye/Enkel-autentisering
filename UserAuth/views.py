@@ -3,9 +3,8 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.request import Request
 from rest_framework.response import Response
-from UserAuth.models import UserProfile, OTPVerification
-from UserAuth.serializer import SignupSerializer, OTPVerifySerializer, OTPResendSerializer, LoginSerializer, PasswordResetSerializer, LogoutSerializer, CoreProfileUpdateSerializer, RefreshAccessTokenSerializer, DeactivateSerializer, ReactivateRequestSeializer
-from UserAuth.services import sign_up_services, validate_otp_activate_services, resend_otp_services, login_services, logout_services, reset_password_services, core_data_update_services, refresh_accesstoken_services, request_deactivation_service, deactivate_services, request_reactivation_services, reactivate_account_services
+from UserAuth.serializer import SignupSerializer, OTPVerifySerializer, OTPResendSerializer, LoginSerializer, PasswordResetSerializer, LogoutSerializer, CoreProfileUpdateSerializer, RefreshAccessTokenSerializer, DeactivateSerializer, ReactivateRequestSeializer, AuthenticatedPasswordChangeSerializer, EmailChangeSerializer
+from UserAuth.services import sign_up_services, validate_otp_activate_services, signup_resend_otp_services, login_services, logout_services, reset_password_services, core_data_update_services, refresh_accesstoken_services, request_deactivation_service, deactivate_services, request_reactivation_services, reactivate_account_services, reactivate_resend_otp_services, deactivate_resend_otp_services, password_reset_otp_services, send_password_change_email, email_change_service
 import logging
 from rest_framework_simplejwt.tokens import RefreshToken
 
@@ -13,8 +12,23 @@ from rest_framework_simplejwt.tokens import RefreshToken
 logger = logging.getLogger(__name__)
 
 
+PURPOSE_SERVICES = {
+    "signup": signup_resend_otp_services,
+    "reactivate": reactivate_resend_otp_services,
+    "deactivate": deactivate_resend_otp_services,
+    "password": password_reset_otp_services,
+}
+
+VERIFICATION_SERVICES = {
+    "signup": validate_otp_activate_services,
+    "reactivate": reactivate_account_services,
+    "deactivate": deactivate_services,
+#    "password": reset_password_services
+}
+
+
 @api_view(["POST"])
-def signup_view(request):
+def signup_view(request): #
     serializer = SignupSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
     sign_up_services(serializer.validated_data)
@@ -25,26 +39,48 @@ def signup_view(request):
 
 
 @api_view(["POST"])
-def verify_otp(request):
+def verify_otp(request): #
     serializer = OTPVerifySerializer(
         data=request.data,
         context={"request": request}
     )
     serializer.is_valid(raise_exception=True)
-    validate_otp_activate_services(serializer.validated_data)
-    return Response(
-        {"message": "The User activated"},
-        status=status.HTTP_200_OK
-    )
+    
+    purpose = serializer.validated_data["purpose"]
+
+    verification_func = VERIFICATION_SERVICES.get(purpose)
+
+    if not verification_func:
+        return Response(
+            {"message": "Invalid Purpose"},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    
+    response = verification_func(serializer.validated_data)
+    
+    return Response(response, status=status.HTTP_200_OK)
+
 
 
 @api_view(["POST"])
-def resend_otp(request):
+def resend_otp(request): #
     serializer = OTPResendSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
-    resend_otp_services(serializer.validated_data)
+
+    purpose = serializer.validated_data["purpose"]
+
+    service_func = PURPOSE_SERVICES.get(purpose)
+
+    if not service_func:
+        return Response(
+            {"error": "Invalid purpose"},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    
+    service_func(serializer.validated_data)
+
     return Response(
-        {"message": "OTP Has been sent to your email"},
+        {"message": f"OTP has been sent for {purpose}."},
         status=status.HTTP_201_CREATED
     )
 
@@ -167,15 +203,28 @@ def reactivate_verification(request):
 
     return Response(response, status=status.HTTP_200_OK)
 
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def change_password(request):
+    serializer = AuthenticatedPasswordChangeSerializer(data=request.data, context={"request": request})
+    serializer.is_valid(raise_exception=True)
     
+    user = request.user
+    user.set_password(serializer.validated_data['new_password'])
+    user.save()
+
+    send_password_change_email(user)
+
+    return Response({"message": "Password changed successfully"}, status=200)
 
 
-def check_auth_status():
-    pass
+@api_view(["POST"])
+def request_email_change(request):
+    serializer = EmailChangeSerializer(data=request.data, context={"request": request})
+    serializer.is_valid(raise_exception=True)
 
-
-def change_password_auth():
-    pass
+    response = email_change_service(serializer.validated_data)
+    return Response(response, status=status.HTTP_200_OK)
 
 
 

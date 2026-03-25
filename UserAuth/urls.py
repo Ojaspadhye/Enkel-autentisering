@@ -9,12 +9,10 @@ urlpatterns = [
     path('logout/', views.logout_view, name="logout"), ##
     path('reset_password/', views.reset_password, name="reset_password"), # When some one is not logged in 
     path('core_update/', views.core_data_update, name="update_profile"), ##
+    path('change_email/', views.request_email_change, name="update_email"), #
     path('security_notification/', views.security_notification, name="security_check"),
     path('refresh_access_token/', views.refresh_access_token, name="refresh_token"), ##
     path('deactivate_account_request/', views.request_deactivate_account, name="deactivate_account_request"), ##
-    path('deacivation_verification/', views.deactivate_verification, name="deacivation_verification"), #
-    path('reactivate_account_request/', views.reactivate_account, name="reactivate_account_request"), #
-    path('reactivate_account_verification/', views.reactivate_verification, name="reactivate_verification"),
-    path('auth_status/', views.check_auth_status, name="check_auth_status"),
-    path('change_password/', views.change_password_auth, name="change_password"), # During person logged in
+    path('reactivate_account_request/', views.reactivate_account, name="reactivate_account_request"), ##
+    path('change_password/', views.change_password, name="change_password"), # During person logged in
 ]
