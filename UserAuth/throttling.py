@@ -1,108 +1,230 @@
-from rest_framework.throttling import UserRateThrottle, AnonRateThrottle
+from rest_framework.throttling import UserRateThrottle, AnonRateThrottle, SimpleRateThrottle
 from django.core.cache import cache
+import time
+
+class OTPThrottleManager:
+
+    @staticmethod
+    def get_request_ip(requests):
+        x_forward_for = requests.META.get("HTTP_X_FORWARD_FOR")
+        if x_forward_for:
+            ip = x_forward_for.split(',')[0].strip()
+        
+        else:
+            ip = requests.META.get("REMOTE_ADDR")
+        
+        return ip or '0.0.0.0'
 
 
-def get_request_ip(requests):
-    x_forward_for = requests.META.get("HTTP_X_FORWARD_FOR")
-    if x_forward_for:
-        ip = x_forward_for.split(',')[0].strip()
-    
-    else:
-        ip = requests.META.get("REMOTE_ADDR")
-    
-    return ip or '0.0.0.0'
+class OTPResendThrottle:
+    MAX_LIMIT = 3
+    INTERVAL = 60
 
-
-class OTPResendThrottle(UserRateThrottle):
-    scope = "resend_otp"
-
-    def can_resend_otp(requests):
-        email = requests.data.get("email")
-        ip = get_request_ip(requests)
+    def can_resend_otp(self, request):
+        email = request.data.get("email")
+        ip = OTPThrottleManager.get_request_ip(request)
 
         if not email:
-            return False
-        
+            return True
+
         throttle_key = f"otp_resend:{email}:{ip}"
 
-        current_count = cache.get(throttle_key, 0)
+        try:
+            current_count = cache.incr(throttle_key)
+        except ValueError:
+            cache.set(throttle_key, 1, timeout=self.INTERVAL)
+            return True
 
-        MAX_LIMIT = 3 
+        if current_count == 1:
+            cache.expire(throttle_key, self.INTERVAL)
 
-        if current_count >= MAX_LIMIT:
+        if current_count > self.MAX_LIMIT:
             return False
-        
-        cache.set(throttle_key, current_count + 1, timeout=60)
+
 
         return True
+    
+
+    def throttle_failure(self, requests):
+        pass
 
 
 
-class OTPVerificationThrottle(UserRateThrottle):
-    scope = "verify_otp"
+class OTPVerificationThrottle:
+    MAX_ABUSE = 20
+    MAX_ATTEMPTS_PER_OTP = 5
+    INTERVAL = 300
 
-    def verify_otp(requests):
-        email = requests.data.get("email")
-        ip = get_request_ip(requests)
-        purpose = requests.data.get("purpose")
-        otp_input = requests.data.get("otp")
+    def verify_otp(self, request):
+        email = request.data.get("email").lower().strip()
+        ip = OTPThrottleManager.get_request_ip(request)
+        purpose = request.data.get("purpose")
+        otp_input = request.data.get("otp")
 
         if not email or not purpose or not otp_input:
             return False
-        
+
         otp_key = f"otp:{email}:{purpose}"
+        attempts_key = f"otp_attempts:{email}:{purpose}"
         abuse_key = f"otp_abuse:{ip}"
 
-        otp_data = cache.get(otp_key, {"otp": None, "attempts": 0})
-
         abuse_count = cache.get(abuse_key, 0)
-
-        MAX_ABUSE = 20
-
-        if abuse_count >= MAX_ABUSE:
+        if abuse_count >= self.MAX_ABUSE:
             return False
-        cache.set(abuse_key, abuse_count + 1, timeout=300)
 
-        otp_data["attempts"] += 1
-
-        MAX_ATTEMPTS_PER_OTP = 5
-        if otp_data["attempts"] > MAX_ATTEMPTS_PER_OTP:
-            cache.set(otp_key, otp_data, timeout=300)
+        otp_data = cache.get(otp_key)
+        if not otp_data:
             return False
         
-        if otp_input == otp_data["otp"]:
-            cache.delete(otp_key)
-            cache.set(abuse_key, 0, timeout=300)
+        otp_value = otp_data.get("otp") if isinstance(otp_data, dict) else otp_data
+
+        attempts = cache.get(attempts_key, 0) + 1
+        cache.set(attempts_key, attempts, timeout=self.EXPIRY)
+
+        if attempts > self.MAX_ATTEMPTS_PER_OTP:
+            cache.add(abuse_key, 0, timeout=self.EXPIRY)
+            cache.incr(abuse_key)
+            return False
+        
+        if str(otp_input) == str(otp_value):
+            cache.delete_many([otp_key, attempts_key, abuse_key])
             return True
         
-
-        cache.set(otp_key, otp_data, timeout=300)
         return False
+    
+    
+    def throttle_failure(self):
+        pass
 
+ 
 
+'''
+Attack Pattern
+1. Same IP + many emails
+2. Different IPs + same pattern emails
+3. Disposable email domains
+
+Multi-Layer Identity
+1. IP → stops burst from one machine
+2. Email → stops repeated attempts on same email
+3. IP + Email → stops targeted abuse
+
+Recomended Keys
+1. signup_ip:{ip}
+2. signup_email:{email}
+3. signup_combo:{ip}:{email}
+'''
 class SignupThrottle(AnonRateThrottle):
-    scope = "signup"
+    #scope = "signup"
+    MAX_IP_ABUSE = 5
+    MAX_EMAIL_ABUSE = 3
+    MAX_COMBO_ABUSE = 2
+    INTERVAL = 3600
+
+    def can_signup(self, request):
+        email = request.data.get("email").lower().split()
+        ip = OTPThrottleManager.get_request_ip(request)
+
+        if not email or not ip:
+            return True
+        
+        mapp = {
+            'ip': {
+                'key': f"signup_ip:{ip}",
+                'limit': self.MAX_IP_ABUSE
+            },
+            'email': {
+                'key': f"signup_email:{email}",
+                'limit': self.MAX_EMAIL_ABUSE
+            },
+            'combo': {
+                'key': f"signup_combo:{ip}:{email}",
+                'limit': self.MAX_COMBO_ABUSE
+            }
+        }
+
+        now = time.time()
+        valid_historys = {}
+
+        for label, data in mapp.items():
+            cache_key = data['key']
+            limit = data['limit']
+
+            history = cache.get(cache_key, [])
+
+            while history and history[-1] <= now - self.INTERVAL:
+                history.pop()
 
 
+            if len(history) >= limit:
+                return False
+            
+            valid_historys[cache_key] = history
+
+        for cache_key, history in valid_historys.items():
+            history.insert(0, now)
+            cache.set(cache_key, history, self.INTERVAL)
+
+        return True
+    
+
+    def throttle_failure(self):
+        pass
+
+
+
+'''
+Attack Pattern
+1. Same email, many passwords
+2. Same IP, many accounts
+3. Distributed attack (botnet)
+'''
 class LoginThrottle(AnonRateThrottle):
     scope = "login"
 
 
+'''
+Attack Pattern
+1. stolen token abuse
+'''
 class AccessTokenThrottle(UserRateThrottle):
-    scope = "access_token"
+    #scope = "access_token"
+    MAX_ATTEMPTS_PER_TOKEN = 5
+    INTERVAL = 180
+
+    def get_access_token(self, request):
+        pass
 
 
+'''
+Attack Pattern
+1. spam DB writes
+'''
 class CoreDataUpdateThrottle(UserRateThrottle):
     scope = "core_update"
 
 
+'''
+Attack Pattern
+1. email spam
+2. verification abuse
+'''
 class UpdateEmailThrottle(UserRateThrottle):
     scope = "change_email"
 
 
+'''
+Attack Pattern
+1. brute-force old password
+'''
 class PasswordChangeThrottle(UserRateThrottle):
     scope = "user_passwrod_update"
 
 
+'''
+Attack Pattern
+1. spam reset emails
+2. DoS via email flooding
+'''
 class AnonPasswordChangeThrottle(AnonRateThrottle): # to send the reset link while user logged out
     scope = "anon_password_update"

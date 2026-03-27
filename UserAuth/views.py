@@ -1,5 +1,5 @@
 from rest_framework import status
-from rest_framework.decorators import api_view, permission_classes
+from rest_framework.decorators import api_view, permission_classes, throttle_classes
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.request import Request
 from rest_framework.response import Response
@@ -7,6 +7,7 @@ from UserAuth.serializer import SignupSerializer, OTPVerifySerializer, OTPResend
 from UserAuth.services import sign_up_services, validate_otp_activate_services, signup_resend_otp_services, login_services, logout_services, reset_password_services, core_data_update_services, refresh_accesstoken_services, request_deactivation_service, deactivate_services, request_reactivation_services, reactivate_account_services, reactivate_resend_otp_services, deactivate_resend_otp_services, password_reset_otp_services, send_password_change_email, email_change_service
 import logging
 from rest_framework_simplejwt.tokens import RefreshToken
+from UserAuth.throttling import SignupThrottle, OTPVerificationThrottle, OTPResendThrottle, LoginThrottle, AnonPasswordChangeThrottle, PasswordChangeThrottle, CoreDataUpdateThrottle, UserRateThrottle, AccessTokenThrottle, AnonRateThrottle, UpdateEmailThrottle
 
 # Create your views here.
 logger = logging.getLogger(__name__)
@@ -28,6 +29,7 @@ VERIFICATION_SERVICES = {
 
 
 @api_view(["POST"])
+@throttle_classes([SignupThrottle])
 def signup_view(request): #
     serializer = SignupSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
@@ -39,6 +41,7 @@ def signup_view(request): #
 
 
 @api_view(["POST"])
+@throttle_classes([OTPVerificationThrottle])
 def verify_otp(request): #
     serializer = OTPVerifySerializer(
         data=request.data,
@@ -63,6 +66,7 @@ def verify_otp(request): #
 
 
 @api_view(["POST"])
+@throttle_classes([OTPResendThrottle])
 def resend_otp(request): #
     serializer = OTPResendSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
@@ -86,6 +90,7 @@ def resend_otp(request): #
 
 
 @api_view(["POST"])
+@throttle_classes([LoginThrottle])
 def login_view(request):
     serializer = LoginSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
@@ -94,6 +99,7 @@ def login_view(request):
 
 
 @api_view(["POST"])
+@throttle_classes([AnonPasswordChangeThrottle])
 def reset_password(request):
     serializer = PasswordResetSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
@@ -106,6 +112,7 @@ def reset_password(request):
 
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
+@throttle_classes([UserRateThrottle])
 def logout_view(request):
     serializer = LogoutSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
@@ -120,6 +127,7 @@ def logout_view(request):
 
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
+@throttle_classes([CoreDataUpdateThrottle])
 def core_data_update(request):
     serializer = CoreProfileUpdateSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
@@ -135,13 +143,9 @@ def core_data_update(request):
     )
 
 
-
-def security_notification():
-    pass
-
-
 @api_view(["POST"])
 @permission_classes([AllowAny])
+@throttle_classes([AccessTokenThrottle])
 def refresh_access_token(request):
     serializer = RefreshAccessTokenSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
@@ -152,6 +156,7 @@ def refresh_access_token(request):
 
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
+@throttle_classes([UserRateThrottle])
 def request_deactivate_account(request):
     serializer = DeactivateSerializer(
         data=request.data,
@@ -165,20 +170,7 @@ def request_deactivate_account(request):
 
 
 @api_view(["POST"])
-@permission_classes([IsAuthenticated])
-def deactivate_verification(request):
-    serializer = OTPVerifySerializer(
-        data=request.data,
-        context={"request": request}
-    )
-    serializer.is_valid(raise_exception=True)
-
-    response = deactivate_services(serializer.validated_data)
-
-    return Response(response, status=status.HTTP_200_OK)
-
-
-@api_view(["POST"])
+@throttle_classes([AnonRateThrottle])
 def reactivate_account(request):
     serializer = ReactivateRequestSeializer(
         data=request.data,
@@ -192,19 +184,8 @@ def reactivate_account(request):
 
 
 @api_view(["POST"])
-def reactivate_verification(request):
-    serializer = OTPVerifySerializer(
-        data=request.data,
-        context={"request": request}
-    )
-    serializer.is_valid(raise_exception=True)
-
-    response = reactivate_account_services(serializer.validated_data)
-
-    return Response(response, status=status.HTTP_200_OK)
-
-@api_view(["POST"])
 @permission_classes([IsAuthenticated])
+@throttle_classes([PasswordChangeThrottle])
 def change_password(request):
     serializer = AuthenticatedPasswordChangeSerializer(data=request.data, context={"request": request})
     serializer.is_valid(raise_exception=True)
@@ -219,6 +200,7 @@ def change_password(request):
 
 
 @api_view(["POST"])
+@throttle_classes([UpdateEmailThrottle])
 def request_email_change(request):
     serializer = EmailChangeSerializer(data=request.data, context={"request": request})
     serializer.is_valid(raise_exception=True)
