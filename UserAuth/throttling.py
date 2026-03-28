@@ -2,7 +2,7 @@ from rest_framework.throttling import UserRateThrottle, AnonRateThrottle, Simple
 from django.core.cache import cache
 import time
 
-class OTPThrottleManager:
+class IPThrottleManager:
 
     @staticmethod
     def get_request_ip(requests):
@@ -22,7 +22,7 @@ class OTPResendThrottle:
 
     def can_resend_otp(self, request):
         email = request.data.get("email")
-        ip = OTPThrottleManager.get_request_ip(request)
+        ip = IPThrottleManager.get_request_ip(request)
 
         if not email:
             return True
@@ -57,7 +57,7 @@ class OTPVerificationThrottle:
 
     def verify_otp(self, request):
         email = request.data.get("email").lower().strip()
-        ip = OTPThrottleManager.get_request_ip(request)
+        ip = IPThrottleManager.get_request_ip(request)
         purpose = request.data.get("purpose")
         otp_input = request.data.get("otp")
 
@@ -114,7 +114,7 @@ Recomended Keys
 2. signup_email:{email}
 3. signup_combo:{ip}:{email}
 '''
-class SignupThrottle(AnonRateThrottle):
+class SignupThrottle(SimpleRateThrottle):
     #scope = "signup"
     MAX_IP_ABUSE = 5
     MAX_EMAIL_ABUSE = 3
@@ -123,7 +123,7 @@ class SignupThrottle(AnonRateThrottle):
 
     def can_signup(self, request):
         email = request.data.get("email").lower().split()
-        ip = OTPThrottleManager.get_request_ip(request)
+        ip = IPThrottleManager.get_request_ip(request)
 
         if not email or not ip:
             return True
@@ -146,11 +146,11 @@ class SignupThrottle(AnonRateThrottle):
         now = time.time()
         valid_historys = {}
 
-        for label, data in mapp.items():
+        for label, data in mapp.items():  ## yoyo The labels has to do its job after this bit gets sorted out
             cache_key = data['key']
             limit = data['limit']
 
-            history = cache.get(cache_key, [])
+            history = cache.get(key=cache_key, default=[])
 
             while history and history[-1] <= now - self.INTERVAL:
                 history.pop()
@@ -175,12 +175,72 @@ class SignupThrottle(AnonRateThrottle):
 
 '''
 Attack Pattern
-1. Same email, many passwords
+1. Same email, many passwords  by email i mean identifier as username_email is allowed
 2. Same IP, many accounts
 3. Distributed attack (botnet)
+
+Key:
+1. identifier: Brute force guessing the password
+2. ip: spam signup from same account
+3. email+ip: added security
 '''
 class LoginThrottle(AnonRateThrottle):
-    scope = "login"
+    #scope = "login"
+
+    MAX_IP_ABUSE = 5
+    MAX_IDENTIFIER_ABUSE = 3
+    MAX_COMBO_ABUSE = 2
+    INTERVAL = 300
+
+    def can_login(self, request):
+        identifier = request.data.get("username_email")
+        ip = IPThrottleManager(request)
+        password = request.data.get("password")
+        
+        if not password:
+            return True  # serializer would test this bit
+        
+        if not identifier:
+            return False  # Will be used in the bit
+        
+        mapp = {
+            'ip': {
+                'key': f"login_ip:{ip}",
+                'limit': self.MAX_IP_ABUSE
+            },
+            'identifier': {
+                'key': f"login_identifier:{identifier}",
+                'limit': self.MAX_IDENTIFIER_ABUSE
+            },
+            'combo': {
+                'key': f"login_combo:{ip}_{identifier}",
+                'limit': self.MAX_COMBO_ABUSE
+            }
+        }
+
+        now = time.time()
+        valid_history = {}
+
+        for labels, data in mapp.items():
+            cache_key = data["key"]
+            limit = data["limit"]
+
+            history = cache.get(key=cache_key, default=[])
+
+            while history and history[-1] <= now - self.INTERVAL:
+                history.pop()
+
+            if len(history) >= limit:
+                return False
+            
+            valid_history["cache_key"] = history
+
+        for cache_key, history in valid_history.items():
+            history.insert(0, now)
+            cache.set(cache_key, history, self.INTERVAL)
+
+        return True
+
 
 
 '''
@@ -188,12 +248,7 @@ Attack Pattern
 1. stolen token abuse
 '''
 class AccessTokenThrottle(UserRateThrottle):
-    #scope = "access_token"
-    MAX_ATTEMPTS_PER_TOKEN = 5
-    INTERVAL = 180
-
-    def get_access_token(self, request):
-        pass
+    scope = "access_token"
 
 
 '''
