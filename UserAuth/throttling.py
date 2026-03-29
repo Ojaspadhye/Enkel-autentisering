@@ -1,6 +1,9 @@
 from rest_framework.throttling import UserRateThrottle, AnonRateThrottle, SimpleRateThrottle
 from django.core.cache import cache
 import time
+from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework_simplejwt.exceptions import InvalidToken
+from UserAuth.models import UserProfile
 
 class IPThrottleManager:
 
@@ -15,6 +18,13 @@ class IPThrottleManager:
         
         return ip or '0.0.0.0'
 
+class UserIdManager:
+
+    @staticmethod
+    def get_user_id(request):
+        user = request.user
+
+        return user.id
 
 class OTPResendThrottle:
     MAX_LIMIT = 3
@@ -248,7 +258,52 @@ Attack Pattern
 1. stolen token abuse
 '''
 class AccessTokenThrottle(UserRateThrottle):
-    scope = "access_token"
+    #scope = "access_token"
+    MAX_TOKEN_ABBUSE = 5
+    MAX_IP_ABUSE = 20
+    INTERVAL = 300
+
+    def can_recive(self, request):
+        raw_reftesh_token = request.data.get("refresh_token")
+        ip = IPThrottleManager.get_request_ip(request)
+
+        if not raw_reftesh_token:
+            return False
+        
+        try:
+            refresh_token = RefreshToken(raw_reftesh_token)
+            jti = refresh_token["jti"]
+        except InvalidToken:
+            return False
+
+        
+        token_key = f"refresh_token:{jti}"
+        ip_key = f"refresh_ip:{ip}"
+
+        token_count = cache.get(token_key, 0)
+        ip_count = cache.get(ip, 0)
+
+        if token_count >= self.MAX_TOKEN_ABBUSE:
+            return False
+        
+        if ip_count >= self.MAX_IP_ABUSE:
+            return False
+        
+        cache.set(token_key, token_count + 1, timeout=self.INTERVAL)
+        cache.set(ip_key, ip_count + 1, timeout=self.INTERVAL)
+
+        return True
+    
+    def issue_new_access(Self, request):
+        raw_refresh = request.data.get("refresh_token")
+
+        try:
+            refresh = RefreshToken(raw_refresh)
+            access = str(refresh.access_token)
+            return {"access": access}
+        except InvalidToken:
+            return None
+        
 
 
 '''
@@ -256,16 +311,83 @@ Attack Pattern
 1. spam DB writes
 '''
 class CoreDataUpdateThrottle(UserRateThrottle):
-    scope = "core_update"
+    #scope = "core_update"
+    LIMIT = 2
+    INTERVEL = 60
 
+    def allow_update(self, request):
+
+        key = f"heavy_update:{UserIdManager.get_user_id(request)}"
+        history = cache.get(key, [])
+
+        now = time.time()
+        valid_history = []
+
+        for times in history:
+            if times > now - self.INTERVEL:
+                valid_history.append(times)
+
+        if len(valid_history) >= self.LIMIT:
+            return False
+        
+
+        valid_history.append(now)
+        cache.set(key, valid_history, timeout=self.INTERVEL)
+        
+        return True
 
 '''
 Attack Pattern
 1. email spam
 2. verification abuse
+
+Heavy operation and imp data involved
 '''
 class UpdateEmailThrottle(UserRateThrottle):
-    scope = "change_email"
+    #scope = "change_email"
+    MAX_USER = 3
+    MAX_EMAIL = 2
+    MAX_COMBO = 1
+    INTERVAL = 3600  # 1 hour
+
+    def allow_update(self, request):
+        user_id = UserIdManager.get_user_id(request)
+        new_email = request.data.get("email").lower().strip()
+
+        if not new_email:
+            return False
+
+        now = time.time()
+
+        mapp = {
+            "user": {"key": f"change_email_user:{user_id}", "limit": self.MAX_USER},
+            "email": {"key": f"change_email_email:{new_email}", "limit": self.MAX_EMAIL},
+            "combo": {"key": f"change_email_combo:{user_id}:{new_email}", "limit": self.MAX_COMBO}
+        }
+
+        valid_histories = {}
+        throttled = False
+
+        for label, data in mapp.items():
+            cache_key = data["key"]
+            limit = data["limit"]
+
+            history = cache.get(cache_key, [])
+
+            history = [t for t in history if t > now - self.INTERVAL]
+
+            if len(history) >= limit:
+                throttled = True
+            valid_histories[cache_key] = history
+
+        if throttled:
+            return False
+
+        for cache_key, history in valid_histories.items():
+            history.append(now)
+            cache.set(cache_key, history, timeout=self.INTERVAL)
+
+        return True
 
 
 '''
@@ -273,7 +395,45 @@ Attack Pattern
 1. brute-force old password
 '''
 class PasswordChangeThrottle(UserRateThrottle):
-    scope = "user_passwrod_update"
+    #scope = "user_password_update"
+    MAX_USER = 3
+    MAX_COMBO = 1
+    INTERVAL = 3600
+
+    def allow_update(self, request):
+        user_id = request.user.id
+        ip = request.META.get("REMOTE_ADDR")
+
+        now = time.time()
+        mapp = {
+            "user": {"key": f"password_change_user:{user_id}", "limit": self.MAX_USER},
+            "combo": {"key": f"password_change_combo:{user_id}:{ip}", "limit": self.MAX_COMBO}
+        }
+
+        valid_histories = {}
+        
+        throttled = False
+        
+        for label, data in mapp.items():
+            cache_key = data["key"]
+            limit = data["limit"]
+
+            history = cache.get(cache_key, [])
+            
+            history = [t for t in history if t > now - self.INTERVAL]
+
+            if len(history) >= limit:
+                throttled = True
+            valid_histories[cache_key] = history
+
+        if throttled:
+            return False
+
+        for cache_key, history in valid_histories.items():
+            history.append(now)
+            cache.set(cache_key, history, timeout=self.INTERVAL)
+
+        return True
 
 
 '''
@@ -281,5 +441,48 @@ Attack Pattern
 1. spam reset emails
 2. DoS via email flooding
 '''
-class AnonPasswordChangeThrottle(AnonRateThrottle): # to send the reset link while user logged out
-    scope = "anon_password_update"
+class AnonPasswordChangeThrottle(AnonRateThrottle):
+    #scope = "anon_password_update"
+    MAX_EMAIL = 3
+    MAX_COMBO = 2
+    INTERVAL = 3600
+
+    def allow_update(self, request):
+        email = request.data.get("email", "").lower().strip()
+        ip = request.META.get("REMOTE_ADDR")
+        now = time.time()
+
+        if not email:
+            return
+
+        mapp = {
+            "email": {"key": f"anon_pass_email:{email}", "limit": self.MAX_EMAIL},
+            "combo": {"key": f"anon_pass_combo:{email}:{ip}", "limit": self.MAX_COMBO}
+        }
+
+        valid_histories = {}
+        throttled = False
+
+        for label, data in mapp.items():
+            cache_key = data["key"]
+            limit = data["limit"]
+
+            history = cache.get(cache_key, [])
+            new_history = []
+
+            for timestamp in history:
+                if timestamp > now - self.INTERVAL:
+                    new_history.append(timestamp)
+
+            if len(new_history) >= limit:
+                throttled = True
+
+            valid_histories[cache_key] = new_history
+        if throttled:
+            return False
+
+        for cache_key, history in valid_histories.items():
+            history.append(now)
+            cache.set(cache_key, history, timeout=self.INTERVAL)
+
+        return True
