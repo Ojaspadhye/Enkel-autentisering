@@ -3,13 +3,13 @@
 This is first in list many other repositories for basic modules like uploding images videos, messageing, video brodcasting etc.
 Cool !!
 
-##TechStack##
+**TechStack**
 1. JWT
 2. Django
 3. Djangorestframework
 4. OAutha2
 
-##Procidure##
+**Procidure**
 1. Clone the project / starter template
 2. Setup environment (venv, dependencies, .env) (do pip install -r reqirements.txt)
 3. Update user model if needed (roles, extra fields, flags)
@@ -20,16 +20,17 @@ Cool !!
 8. Wire core services (email, OTP, async tasks if any)
 9. BHOOM !! build actual business logic. Let other stupid peps do this shit put your brain in better thing
 
-##Dev setup for testing##
+**Dev setup for testing**
 1. Link:(UserAuth) 
 
-##Basic URLS##
+**Basic URLS**
 1. Link: (UserAuth)
 
-##Docker Container (Docker Hub)##
+**Docker Container (Docker Hub)**
+Docker Image
 1. Link: (UserAuth)
 
-##Production Settings (Refrence)##
+**Production Settings (Refrence)**
 1. Link: (UserAuth)
 
 (I love swedish!!)
