@@ -24,7 +24,7 @@ Cool !!
 1. Link:(UserAuth) 
 
 **Basic URLS**
-1. Link: (UserAuth)
+1. Link: https://documenter.getpostman.com/view/50616787/2sBXiqDoMs
 
 **Docker Container (Docker Hub)**
 Docker Image
