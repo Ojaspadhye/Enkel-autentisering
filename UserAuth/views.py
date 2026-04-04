@@ -8,6 +8,7 @@ from UserAuth.services import sign_up_services, validate_otp_activate_services, 
 import logging
 from rest_framework_simplejwt.tokens import RefreshToken
 from UserAuth.throttling import SignupThrottle, OTPVerificationThrottle, OTPResendThrottle, LoginThrottle, AnonPasswordChangeThrottle, PasswordChangeThrottle, CoreDataUpdateThrottle, UserRateThrottle, AccessTokenThrottle, AnonRateThrottle, UpdateEmailThrottle
+import asyncio
 
 # Create your views here.
 logger = logging.getLogger(__name__)
@@ -21,19 +22,19 @@ PURPOSE_SERVICES = {
 }
 
 VERIFICATION_SERVICES = {
-    "signup": validate_otp_activate_services,
-    "reactivate": reactivate_account_services,
-    "deactivate": deactivate_services,
+    "signup": validate_otp_activate_services, # Async
+    "reactivate": reactivate_account_services, # Async
+    "deactivate": deactivate_services, # Async
 #    "password": reset_password_services
 }
 
 
 @api_view(["POST"])
 @throttle_classes([SignupThrottle])
-def signup_view(request): #
+def signup_view(request): # Async services
     serializer = SignupSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
-    sign_up_services(serializer.validated_data)
+    asyncio.run(sign_up_services(serializer.validated_data))
     return Response(
         {"message": "A verification code has been sent to your email."},
         status=status.HTTP_201_CREATED,
@@ -59,7 +60,7 @@ def verify_otp(request): #
             status=status.HTTP_400_BAD_REQUEST
         )
     
-    response = verification_func(serializer.validated_data)
+    response = asyncio.run(verification_func(serializer.validated_data))
     
     return Response(response, status=status.HTTP_200_OK)
 
@@ -103,7 +104,7 @@ def login_view(request):
 def reset_password(request):
     serializer = PasswordResetSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
-    reset_password_services(serializer.validated_data)
+    asyncio.run(reset_password_services(serializer.validated_data))
     return Response(
         {"message": "Password reset link sent to the email"},
         status=status.HTTP_200_OK
@@ -132,7 +133,7 @@ def core_data_update(request):
     serializer = CoreProfileUpdateSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
     user = request.user
-    response = core_data_update_services(serializer.validated_data, user)
+    response = asyncio.run(core_data_update_services(serializer.validated_data, user))
       
     return Response(
         {
@@ -164,21 +165,21 @@ def request_deactivate_account(request):
     )
     serializer.is_valid(raise_exception=True)
 
-    response = request_deactivation_service(serializer.validated_data)
+    response = asyncio.run(request_deactivation_service(serializer.validated_data))
 
     return Response(response, status=status.HTTP_200_OK)
 
 
 @api_view(["POST"])
 @throttle_classes([AnonRateThrottle])
-def reactivate_account(request):
+def request_reactivate_account(request):
     serializer = ReactivateRequestSeializer(
         data=request.data,
         context={"request": request}
     )
     serializer.is_valid(raise_exception=True)
 
-    response = request_reactivation_services(serializer.validated_data)
+    response = asyncio.run(request_reactivation_services(serializer.validated_data))
 
     return Response(response, status=status.HTTP_200_OK)
 
@@ -194,7 +195,7 @@ def change_password(request):
     user.set_password(serializer.validated_data['new_password'])
     user.save()
 
-    send_password_change_email(user)
+    asyncio.run(send_password_change_email(user))
 
     return Response({"message": "Password changed successfully"}, status=200)
 

@@ -64,57 +64,9 @@ class OTPResendThrottle(BaseThrottle):
 
 
 
-class OTPVerificationThrottle(BaseThrottle):
-    MAX_ABUSE = 20
-    MAX_ATTEMPTS_PER_OTP = 5
-    INTERVAL = 300
-
-    def verify_otp(self, request):
-        email = request.data.get("email").lower().strip()
-        ip = IPThrottleManager.get_request_ip(request)
-        purpose = request.data.get("purpose")
-        otp_input = request.data.get("otp")
-
-        if not email or not purpose or not otp_input:
-            return False
-
-        otp_key = f"otp:{email}:{purpose}"
-        attempts_key = f"otp_attempts:{email}:{purpose}"
-        abuse_key = f"otp_abuse:{ip}"
-
-        abuse_count = cache.get(abuse_key, 0)
-        if abuse_count >= self.MAX_ABUSE:
-            return False
-
-        otp_data = cache.get(otp_key)
-        if not otp_data:
-            return False
-        
-        otp_value = otp_data.get("otp") if isinstance(otp_data, dict) else otp_data
-
-        attempts = cache.get(attempts_key, 0) + 1
-        cache.set(attempts_key, attempts, timeout=self.EXPIRY)
-
-        if attempts > self.MAX_ATTEMPTS_PER_OTP:
-            cache.add(abuse_key, 0, timeout=self.EXPIRY)
-            cache.incr(abuse_key)
-            return False
-        
-        if str(otp_input) == str(otp_value):
-            cache.delete_many([otp_key, attempts_key, abuse_key])
-            return True
-        
-        return False
-    
-
-    def allow_request(self, request, view):
-        return self.verify_otp(request)
-    
-    
-    def throttle_failure(self):
-        pass
-
- 
+class OTPVerificationThrottle(UserRateThrottle): ## I gave up I was not able to find the bug and my mouse broke Fuck this shit !! update
+    scope = "verify_otp" ## If sombady can write better custom throttel help would be appritiated
+# Wanted to use burst throtteling technique as the user is alredy logged in toomuch throttle is not that necessary yet it is kind of important Thanks!!
 
 '''
 Attack Pattern
@@ -424,7 +376,7 @@ Attack Pattern
 class PasswordChangeThrottle(BaseThrottle):
     #scope = "user_password_update"
     MAX_USER = 3
-    MAX_COMBO = 1
+    MAX_COMBO = 5
     INTERVAL = 3600
 
     def allow_update(self, request):
@@ -474,21 +426,21 @@ Attack Pattern
 '''
 class AnonPasswordChangeThrottle(BaseThrottle):
     #scope = "anon_password_update"
-    MAX_EMAIL = 3
-    MAX_COMBO = 2
+    MAX_EMAIL = 1
+    MAX_COMBO = 1
     INTERVAL = 3600
 
     def allow_update(self, request):
-        email = request.data.get("email", "").lower().strip()
+        identifier = request.data.get("username_email", "").lower().strip()
         ip = request.META.get("REMOTE_ADDR")
         now = time.time()
 
-        if not email:
-            return
+        if not identifier:
+            return True
 
         mapp = {
-            "email": {"key": f"anon_pass_email:{email}", "limit": self.MAX_EMAIL},
-            "combo": {"key": f"anon_pass_combo:{email}:{ip}", "limit": self.MAX_COMBO}
+            "identifier": {"key": f"anon_pass_email:{identifier}", "limit": self.MAX_EMAIL},
+            "combo": {"key": f"anon_pass_combo:{identifier}:{ip}", "limit": self.MAX_COMBO}
         }
 
         valid_histories = {}
@@ -500,7 +452,6 @@ class AnonPasswordChangeThrottle(BaseThrottle):
 
             history = cache.get(cache_key, [])
             new_history = []
-
             for timestamp in history:
                 if timestamp > now - self.INTERVAL:
                     new_history.append(timestamp)
@@ -521,3 +472,7 @@ class AnonPasswordChangeThrottle(BaseThrottle):
 
     def allow_request(self, request, view):
         return self.allow_update(request)
+    
+
+'''
+ are getting throtteling errores'''

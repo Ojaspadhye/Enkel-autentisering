@@ -42,13 +42,13 @@ class OTPVerifySerializer(serializers.Serializer):
 
     def validate(self, data):
         email = data.get("email").strip().lower()
+        print(email)
         otp_input = data.get("otp").strip()
         purpose = data.get("purpose")
-
-        try:
-            user = UserProfile.objects.get(email__iexact=email)
-        except UserProfile.DoesNotExist:
-            raise UserNotFound()
+        
+        user = UserProfile.objects.filter(email__iexact=email).first()
+        if not user:
+            raise serializers.ValidationError({"detail": "Account with this email does not exist"})
 
         if not otp_input.isdigit():
             raise serializers.ValidationError("OTP is inappropriate")
