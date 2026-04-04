@@ -1,4 +1,4 @@
-from rest_framework.throttling import UserRateThrottle, AnonRateThrottle, SimpleRateThrottle
+from rest_framework.throttling import UserRateThrottle, AnonRateThrottle, SimpleRateThrottle, BaseThrottle
 from django.core.cache import cache
 import time
 from rest_framework_simplejwt.tokens import RefreshToken
@@ -26,7 +26,7 @@ class UserIdManager:
 
         return user.id
 
-class OTPResendThrottle:
+class OTPResendThrottle(BaseThrottle):
     MAX_LIMIT = 3
     INTERVAL = 60
 
@@ -55,12 +55,16 @@ class OTPResendThrottle:
         return True
     
 
+    def allow_request(self, request, view):
+        return self.can_resend_otp(request)
+    
+
     def throttle_failure(self, requests):
         pass
 
 
 
-class OTPVerificationThrottle:
+class OTPVerificationThrottle(BaseThrottle):
     MAX_ABUSE = 20
     MAX_ATTEMPTS_PER_OTP = 5
     INTERVAL = 300
@@ -102,6 +106,10 @@ class OTPVerificationThrottle:
         
         return False
     
+
+    def allow_request(self, request, view):
+        return self.verify_otp(request)
+    
     
     def throttle_failure(self):
         pass
@@ -124,7 +132,7 @@ Recomended Keys
 2. signup_email:{email}
 3. signup_combo:{ip}:{email}
 '''
-class SignupThrottle(SimpleRateThrottle):
+class SignupThrottle(BaseThrottle):
     #scope = "signup"
     MAX_IP_ABUSE = 5
     MAX_EMAIL_ABUSE = 3
@@ -132,7 +140,7 @@ class SignupThrottle(SimpleRateThrottle):
     INTERVAL = 3600
 
     def can_signup(self, request):
-        email = request.data.get("email").lower().split()
+        email = request.data.get("email").lower().strip()
         ip = IPThrottleManager.get_request_ip(request)
 
         if not email or not ip:
@@ -160,7 +168,7 @@ class SignupThrottle(SimpleRateThrottle):
             cache_key = data['key']
             limit = data['limit']
 
-            history = cache.get(key=cache_key, default=[])
+            history = cache.get(key=cache_key) or []
 
             while history and history[-1] <= now - self.INTERVAL:
                 history.pop()
@@ -176,6 +184,10 @@ class SignupThrottle(SimpleRateThrottle):
             cache.set(cache_key, history, self.INTERVAL)
 
         return True
+    
+
+    def allow_request(self, request, view):
+        return self.can_signup(request)
     
 
     def throttle_failure(self):
@@ -194,17 +206,18 @@ Key:
 2. ip: spam signup from same account
 3. email+ip: added security
 '''
-class LoginThrottle(AnonRateThrottle):
+class LoginThrottle(BaseThrottle):
     #scope = "login"
 
     MAX_IP_ABUSE = 5
-    MAX_IDENTIFIER_ABUSE = 3
+    MAX_IDENTIFIER_ABUSE = 5
     MAX_COMBO_ABUSE = 2
     INTERVAL = 300
 
     def can_login(self, request):
         identifier = request.data.get("username_email")
-        ip = IPThrottleManager(request)
+        ip = IPThrottleManager.get_request_ip(request)
+        print (ip)
         password = request.data.get("password")
         
         if not password:
@@ -235,7 +248,7 @@ class LoginThrottle(AnonRateThrottle):
             cache_key = data["key"]
             limit = data["limit"]
 
-            history = cache.get(key=cache_key, default=[])
+            history = cache.get(key=cache_key) or []
 
             while history and history[-1] <= now - self.INTERVAL:
                 history.pop()
@@ -243,13 +256,17 @@ class LoginThrottle(AnonRateThrottle):
             if len(history) >= limit:
                 return False
             
-            valid_history["cache_key"] = history
+            valid_history[cache_key] = history
 
         for cache_key, history in valid_history.items():
             history.insert(0, now)
             cache.set(cache_key, history, self.INTERVAL)
 
         return True
+    
+
+    def allow_request(self, request, view):
+        return self.can_login(request)
 
 
 
@@ -257,7 +274,7 @@ class LoginThrottle(AnonRateThrottle):
 Attack Pattern
 1. stolen token abuse
 '''
-class AccessTokenThrottle(UserRateThrottle):
+class AccessTokenThrottle(BaseThrottle):
     #scope = "access_token"
     MAX_TOKEN_ABBUSE = 5
     MAX_IP_ABUSE = 20
@@ -303,6 +320,9 @@ class AccessTokenThrottle(UserRateThrottle):
             return {"access": access}
         except InvalidToken:
             return None
+    
+    def allow_request(self, request, view):
+        return self.can_recive(request)
         
 
 
@@ -310,7 +330,7 @@ class AccessTokenThrottle(UserRateThrottle):
 Attack Pattern
 1. spam DB writes
 '''
-class CoreDataUpdateThrottle(UserRateThrottle):
+class CoreDataUpdateThrottle(BaseThrottle):
     #scope = "core_update"
     LIMIT = 2
     INTERVEL = 60
@@ -335,6 +355,9 @@ class CoreDataUpdateThrottle(UserRateThrottle):
         cache.set(key, valid_history, timeout=self.INTERVEL)
         
         return True
+    
+    def allow_request(self, request, view):
+        return self.allow_update(request)
 
 '''
 Attack Pattern
@@ -343,7 +366,7 @@ Attack Pattern
 
 Heavy operation and imp data involved
 '''
-class UpdateEmailThrottle(UserRateThrottle):
+class UpdateEmailThrottle(BaseThrottle):
     #scope = "change_email"
     MAX_USER = 3
     MAX_EMAIL = 2
@@ -388,13 +411,17 @@ class UpdateEmailThrottle(UserRateThrottle):
             cache.set(cache_key, history, timeout=self.INTERVAL)
 
         return True
+    
+
+    def allow_request(self, request, view):
+        return UpdateEmailThrottle(request)
 
 
 '''
 Attack Pattern
 1. brute-force old password
 '''
-class PasswordChangeThrottle(UserRateThrottle):
+class PasswordChangeThrottle(BaseThrottle):
     #scope = "user_password_update"
     MAX_USER = 3
     MAX_COMBO = 1
@@ -434,6 +461,10 @@ class PasswordChangeThrottle(UserRateThrottle):
             cache.set(cache_key, history, timeout=self.INTERVAL)
 
         return True
+    
+
+    def allow_request(self, request, view):
+        return self.allow_update(request)
 
 
 '''
@@ -441,7 +472,7 @@ Attack Pattern
 1. spam reset emails
 2. DoS via email flooding
 '''
-class AnonPasswordChangeThrottle(AnonRateThrottle):
+class AnonPasswordChangeThrottle(BaseThrottle):
     #scope = "anon_password_update"
     MAX_EMAIL = 3
     MAX_COMBO = 2
@@ -486,3 +517,7 @@ class AnonPasswordChangeThrottle(AnonRateThrottle):
             cache.set(cache_key, history, timeout=self.INTERVAL)
 
         return True
+    
+
+    def allow_request(self, request, view):
+        return self.allow_update(request)
