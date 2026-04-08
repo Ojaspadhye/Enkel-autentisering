@@ -1,4 +1,5 @@
 from rest_framework import serializers
+from rest_framework.exceptions import AuthenticationFailed
 from django.contrib.auth.password_validation import validate_password
 from django.db.models import Q
 from UserAuth.models import UserProfile, OTPVerification
@@ -258,6 +259,9 @@ class RefreshAccessTokenSerializer(serializers.Serializer):
         user = UserProfile.objects.filter(id=user_uuid, is_active=True).first()
         if not user:
             raise serializers.ValidationError("User does not exist or is inactive")
+        
+        if not user.is_active:
+            raise AuthenticationFailed("Account is deactivated")
 
         return data
 
