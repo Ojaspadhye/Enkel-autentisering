@@ -288,6 +288,8 @@ async def deactivate_services(validated_data):
         return {"message": "User successfully deactivated"}
 
     result = await deactivate_account(user, otp_record)
+    
+    RefreshToken.objects.filter(user=user, revoked=False).update(revoked=True)
 
     logger.info(
         "Account deactivated | email=%s user_id=%s",
