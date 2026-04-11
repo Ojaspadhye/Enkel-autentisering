@@ -1,6 +1,6 @@
 from django.db import models
 from django.utils import timezone
-from django.contrib.auth.models import BaseUserManager, AbstractBaseUser
+from django.contrib.auth.models import BaseUserManager, AbstractBaseUser, PermissionsMixin
 import secrets
 from datetime import timedelta
 from uuid import uuid1
@@ -39,7 +39,7 @@ class CustomProfileManager(BaseUserManager):
 
 
 
-class UserProfile(AbstractBaseUser):
+class UserProfile(AbstractBaseUser,PermissionsMixin):
     id = models.UUIDField(primary_key=True, default=uuid1)
     username = models.CharField(max_length=100, unique=True)
     email = models.EmailField(unique=True)
@@ -49,6 +49,7 @@ class UserProfile(AbstractBaseUser):
     
     is_active = models.BooleanField(default=False)
     is_staff = models.BooleanField(default=False)
+    is_superuser = models.BooleanField(default=False)
     
     date_joined = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -69,6 +70,14 @@ class UserProfile(AbstractBaseUser):
     
     def full_name(self):
         return f"{self.first_name or ''} {self.last_name or ''}".strip() or self.username
+    
+    def has_perm(self, perm, obj=None):
+        # superusers have all permissions
+        return self.is_superuser
+
+    def has_module_perms(self, app_label):
+        # superusers have all module permissions
+        return self.is_superuser
 
 
 class OTPVerificationManager(models.Manager):
